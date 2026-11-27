@@ -995,7 +995,7 @@ static const char *graph_project_name(uint32_t slot)  /* (after graph_project_us
 #define SG_Y 3                                         /* the lanes: y 3 .. 88 */
 #define SG_LH 20                                       /* a lane's height (its letter, the pattern's picture), SG_LG between two */
 #define SG_LG 2
-#define SG_H (NTRK * (SG_LH + SG_LG) - SG_LG)
+#define SG_H (CHAIN_NT * (SG_LH + SG_LG) - SG_LG)   /* (BOMZH LIVE: a song's four lanes) */
 #define SG_LY(k) (SG_Y + (int32_t)(k) * (SG_LH + SG_LG))   /* lane k's top */
 #define SG_GAP 2                                       /* between two blocks (in a block's width) */
 #define SG_MINW 16                                     /* a block's least width, its gap included: a letter in it */
@@ -1587,6 +1587,10 @@ static struct {
     uint32_t col[NTRK];
     uint8_t meter[NTRK];
 } ts;
+/* BOMZH LIVE: the panel shows four tracks (its cards and rows were drawn for four): the window of four that holds the
+ * selected one, T1..T4 until T5 or T6 is selected. ts.col is then by place in the window (its signature has the track) */
+#define TRK_VIEW 4u
+static uint32_t trk_view0(void) { return song.sel < TRK_VIEW ? 0u : (uint32_t)song.sel + 1u - TRK_VIEW; }
 
 static int32_t meter_px(int32_t a)                   /* |sample| (Q15) -> px: 60 dB over the slot */
 {
@@ -1659,8 +1663,8 @@ static void trk_short_name(uint32_t c, char *b)      /* the track's sound, b hol
  * the output meter under it (MID); a muted track DIM */
 #define TSS_GY 40                                    /* the LEVEL gauge, 3 px */
 #define TSS_MY 48                                    /* the meter, 3 px */
-static void track_strip(uint32_t c, uint32_t sel, uint32_t st, uint32_t mute, uint32_t arm, uint32_t hot, uint32_t lvl,
-                        const char *b, uint32_t lit)
+static void track_strip(uint32_t c, uint32_t pos, uint32_t sel, uint32_t st, uint32_t mute, uint32_t arm, uint32_t hot,
+                        uint32_t lvl, const char *b, uint32_t lit)
 {
     int32_t gw = CARD_W - 10, m = ts.meter[c] * gw / (TS_MH - 2), fx = (int32_t)lvl * gw / 127;
     uint16_t vc = mute ? T_DIM : T_THEME;
@@ -1685,19 +1689,19 @@ static void track_strip(uint32_t c, uint32_t sel, uint32_t st, uint32_t mute, ui
     cv_rrect(5, TSS_MY, gw, 3, 1, T_RAISE, T_SURF);
     if (m)
         cv_rrect(5, TSS_MY, m < 3 ? 3 : m, 3, 1, T_MID, T_RAISE);
-    cv_blit((uint32_t)CARD_X(c), LG_Y_GRAPH);
+    cv_blit((uint32_t)CARD_X(pos), LG_Y_GRAPH);
 }
 static void draw_tracks(void)
 {
-    uint32_t c, sk = strip_kind() == SK_TRK;
+    uint32_t c, j, v0 = trk_view0(), sk = strip_kind() == SK_TRK;
     if (ui.force) {                                  /* the BG beside the columns only, they cover the rest (#181: */
         draw_gaps(graph_y(), graph_h());             /* the whole panel cleared first flashed on every sound load and
                                                       * track change); LINE: divided as the cards above */
         for (c = 0; c < NTRK; c++)
             ts.meter[c] = 0;
     }
-    for (c = 0; c < NTRK; c++) {
-        track_t *t = &trk[c];
+    for (j = 0; j < TRK_VIEW; j++) {                  /* (BOMZH LIVE: the window's four, card j track v0 + j) */
+        track_t *t = &trk[c = v0 + j];
         uint32_t sel = c == song.sel, lvl = trk_level(c), mute = t->p[P_MUTE] != 0, lit = (uint32_t)midi_lit(c);
         uint32_t arm = (song.rec >> c) & 1u, st = arm ? (song.playing ? 1u : 2u) : mute ? 3u : 0u, sig;
         uint32_t hot = sel && ui.hot_t ? ui.hot_col + 1u : 0u;   /* the knob just turned (hot_col + 1): 1 LEVEL, 2 PAN,
@@ -1713,12 +1717,12 @@ static void draw_tracks(void)
         ts.meter[c] = (uint8_t)(m < 0 ? 0 : m);
         sig = str_hash(1u + sel + st * 2u + (mute && arm) * 16u + hot * 32u, b) + lvl * 7919u +
               ts.meter[c] * 131u + (uint32_t)(pan + 128) * 104729u + (uint32_t)rv * 1299709u + mute * 3u + sk * 0x9E37u +
-              lit * 15485863u;                         /* (1.5.5: MIDI IN lights the cushion) */
-        if (!ui.force && sig == ts.col[c])
+              lit * 15485863u + c * 0x85EBCA6Bu;       /* (1.5.5: MIDI IN lights the cushion; BOMZH LIVE: the track) */
+        if (!ui.force && sig == ts.col[j])
             continue;
-        ts.col[c] = sig;
+        ts.col[j] = sig;
         if (sk) {
-            track_strip(c, sel, st, mute, arm, hot, lvl, b, lit);
+            track_strip(c, j, sel, st, mute, arm, hot, lvl, b, lit);
             continue;
         }
         cv_begin(CARD_W, H_GRAPH, T_BG);
@@ -1772,7 +1776,7 @@ static void draw_tracks(void)
             GFX_HOOK_ALIGN(42 - KNOB_SMALL_R, 0, 42 + KNOB_SMALL_R, 0, AL_H, "mixer value under its knob");
             cv_text_in(42 - KNOB_SMALL_R, KS_Y + 17, 2 * KNOB_SMALL_R, &AF_S, v, rc, T_SURF);
         }
-        cv_blit((uint32_t)CARD_X(c), Y_GRAPH);
+        cv_blit((uint32_t)CARD_X(j), Y_GRAPH);
     }
 }
 /* HOME > TRACKS (1.3, Discussions #112 / #134: MENU > DISPLAY > HOME TRACKS): the four tracks as rows in the panel, one
@@ -1804,13 +1808,13 @@ static void tr_meter(int32_t x, int32_t y, uint32_t c, uint16_t slot, uint16_t f
     if (m)
         cv_rrect(x, y + TR_MH - m, 4, m, m >= 4 ? 2 : 0, fill, slot);
 }
-static void home_track_row(uint32_t c)
+static void home_track_row(uint32_t c, uint32_t row)   /* (BOMZH LIVE: track c in row `row` of the window) */
 {
     track_t *t = &trk[c];
     const step_t *s = seq_steps(t);
     uint32_t sel = c == song.sel, mute = t->p[P_MUTE] != 0, large = (ui_prefs & PREF_LARGE) != 0u, lit = (uint32_t)midi_lit(c);
     uint32_t len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP), np = (len + 15u) / 16u, pg, p0, ph, i, sig, carry = 0;
-    int32_t y = Y_GRAPH + (int32_t)c * TR_PITCH, m, x, xr = 222, ch = large ? AF_M_CAP_H : AF_S_CAP_H;
+    int32_t y = Y_GRAPH + (int32_t)row * TR_PITCH, m, x, xr = 222, ch = large ? AF_M_CAP_H : AF_S_CAP_H;
     uint16_t bg = sel ? T_THEME : T_SURF, half = ux_mix(T_THEME, T_INK, 35);
     uint16_t cn = sel ? (mute ? ux_mix(T_THEME, T_INK, 55) : T_INK) : mute ? T_DIM : T_THEME;   /* a note */
     uint16_t ca = sel || mute ? cn : T_ACCENT, cs = sel ? half : T_RAISE;   /* accented; a stub */
@@ -1827,8 +1831,8 @@ static void home_track_row(uint32_t c)
     if (m < ts.meter[c] - 1)
         m = ts.meter[c] - 1;                         /* (falls as the MIXER's) */
     sig = str_hash(1u + sel + mute * 2u + large * 4u + t->eng_req * 8u, b) + steps_hash(t) * 31u + pg * 7919u +
-          ph * 104729u + len * 1299709u + lit * 15485863u;   /* (1.5.5: MIDI IN lights the cushion) */
-    if (!ui.force && sig == ts.col[c]) {
+          ph * 104729u + len * 1299709u + lit * 15485863u + c * 0x85EBCA6Bu;   /* (1.5.5: MIDI IN; BOMZH LIVE: track) */
+    if (!ui.force && sig == ts.col[row]) {
         if (m != ts.meter[c]) {                      /* the meter alone: its slot */
             ts.meter[c] = (uint8_t)m;
             cv_begin(4, TR_MH, bg);
@@ -1837,7 +1841,7 @@ static void home_track_row(uint32_t c)
         }
         return;
     }
-    ts.col[c] = sig;
+    ts.col[row] = sig;
     ts.meter[c] = (uint8_t)m;
     cv_begin(TR_W, TR_H, T_BG);
     cv_rrect(0, 0, TR_W, TR_H, 5, bg, T_BG);
@@ -1901,7 +1905,7 @@ static void draw_home_tracks(void)
         lcd_fill(3 + TR_W, Y_GRAPH, 240 - 3 - TR_W, H_GRAPH, T_BG);
         for (c = 0; c < NTRK; c++)
             ts.meter[c] = 0;
-        for (c = 1; c < NTRK; c++) {                 /* the 2 rows between two rows; LINE: a rule on the first */
+        for (c = 1; c < TRK_VIEW; c++) {             /* the 2 rows between two rows; LINE: a rule on the first */
             uint32_t y = (uint32_t)(Y_GRAPH + (int32_t)c * TR_PITCH - 2);
             if (ux.style) {
                 lcd_fill(3, y, TR_W, 1, T_RULE);
@@ -1910,8 +1914,8 @@ static void draw_home_tracks(void)
             lcd_fill(3, ux.style ? y + 1u : y, TR_W, ux.style ? 1u : 2u, T_BG);
         }
     }
-    for (c = 0; c < NTRK; c++)
-        home_track_row(c);
+    for (c = 0; c < TRK_VIEW; c++)
+        home_track_row(trk_view0() + c, c);
 }
 /* oscilloscope of the output, triggered on a rising zero crossing: a RAISE centre line, the trace 2 px (in silence
  * a flat line on it; MENU > SCREEN OFF keeps it from staying on the panel for hours) */
@@ -2114,7 +2118,7 @@ static void graph_song(void)
     song_lay_t L;
     const aafont_t *fl = &AF_M;                       /* the line: the selected cell's detail and the length, M */
     int32_t off, px, sp, hi = SG_X0 + SG_W, bx, x0, ly = SG_IY - (AF_M_CAP_Y + AF_M_CAP_H);
-    uint32_t i, j, k, c = song_cur(), lane = ui.song_trk % NTRK, total, bars;
+    uint32_t i, j, k, c = song_cur(), lane = ui.song_trk % CHAIN_NT, total, bars;
     char b[24], a[12];
     song_layout(&L);
     off = song_follow(&L);
@@ -2122,14 +2126,14 @@ static void graph_song(void)
     sp = px >= 0 ? SG_X0 + px - off : -100;
     total = L.u0[L.n];
     bars = (total + SG_BARU - 1u) / SG_BARU;
-    for (k = 0; k < NTRK; k++)                        /* the lanes' cushions */
+    for (k = 0; k < CHAIN_NT; k++)                    /* the lanes' cushions */
         cv_trk(SG_TX, SG_LY(k) + (SG_LH - 16) / 2, 16, k, k == lane ? T_ACCENT : T_MID, T_SURF);
     for (i = 1; i < L.n; i++) {                       /* the sections' boundaries, faint, behind the blocks */
         int32_t x = SG_X0 + L.x[i] - off - 1;
         if (x >= SG_X0 && x < hi)
             cv_rect(x, SG_Y, 1, SG_H, T_LINE);
     }
-    for (k = 0; k < NTRK; k++)                        /* the lanes: a block per run of one slot, "-" a faint line */
+    for (k = 0; k < CHAIN_NT; k++)                    /* the lanes: a block per run of one slot, "-" a faint line */
         for (i = 0; i < L.n; i = j) {
             uint32_t s = chain_config.row[i].slot[k];
             for (j = i + 1u; j < L.n && chain_config.row[j].slot[k] == s; j++)
@@ -2167,11 +2171,11 @@ static void graph_song(void)
         r1 = r1 < hi ? r1 : hi;
         if (r1 > r0) cv_rect(r0, SG_RY, r1 - r0, 1, T_LINE);
         if (sp >= SG_X0 && sp < hi - 1) {              /* the playhead, across the lanes (INK on the cell selected) */
-            for (k = 0; k < NTRK; k++) {
+            for (k = 0; k < CHAIN_NT; k++) {
                 uint32_t s = c < L.n ? chain_config.row[c].slot[k] : CHAIN_SILENT;
                 int on = k == lane && s < 4u && graph_project_used(s) && sp >= SG_X0 + L.x[c] - off &&
                          sp + 2 <= SG_X0 + L.x[c + 1u] - off - SG_GAP;
-                cv_rect(sp, SG_LY(k), 2, SG_LH + (k + 1u < NTRK ? SG_LG : 0), on ? T_INK : T_ACCENT);
+                cv_rect(sp, SG_LY(k), 2, SG_LH + (k + 1u < CHAIN_NT ? SG_LG : 0), on ? T_INK : T_ACCENT);
             }
             cv_rect(sp, SG_Y + SG_H, 2, SG_RY - SG_Y - SG_H + 6, T_ACCENT);
         }

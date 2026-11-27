@@ -626,7 +626,7 @@ static int32_t env_tick(track_t *t, voice_t *v)
  * voice. A buffer per part (the two cores render parts at once, fx.c mix_block) */
 #if FELUCCA_CPU2
 #define T_SPREAD(t) ((t)->spread_on)
-static int32_t spread_buf[NTRK][CTL];
+static int32_t spread_buf[NTRK][CTL] __attribute__((section(".pool")));   /* (BOMZH LIVE: the pool, as motion_base) */
 #define SPREAD_BUF(t) spread_buf[C1_PI(t)]
 #define SPREAD_CLEAR(t) spread_clear(SPREAD_BUF(t))
 #define SPREAD_SUM(out, t) spread_sum(out, SPREAD_BUF(t))

@@ -56,7 +56,7 @@ static int ml_drop(uint32_t cc, uint32_t k, uint32_t id)
 static uint32_t ml_learn(uint32_t cc, uint32_t k, uint32_t id)
 {
     uint32_t i;
-    if (!ml_free_cc(cc) || k >= NTRK || id >= P_COUNT)
+    if (!ml_free_cc(cc) || k >= 4u || id >= P_COUNT)    /* (BOMZH LIVE: an entry holds the track in 2 bits: T1..T4) */
         return 2;
     (void)ml_drop(cc, k, id);
     for (i = 0; i < ML_N; i++)

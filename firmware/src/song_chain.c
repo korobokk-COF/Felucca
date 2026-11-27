@@ -14,10 +14,10 @@
  * A silent track ("-", CHAIN_SILENT) plays nothing in that section: at its start the track's sequenced notes are
  * released (seq_release, as at every section) and its automation goes back to the sound's own values (motion_restore);
  * no step, automation or lock of any slot plays there. Live keys and the arp still play it (the sound stays). */
-typedef struct {
-    step_t step[NTRK][NSTEP];
-    int16_t timing[NTRK][4];
-    uint8_t qnt[NTRK];                       /* each track's QUANTIZE (P_SQNT) as saved */
+typedef struct {                             /* (BOMZH LIVE: T1..T4, CHAIN_NT: a project's tracks) */
+    step_t step[CHAIN_NT][NSTEP];
+    int16_t timing[CHAIN_NT][4];
+    uint8_t qnt[CHAIN_NT];                   /* each track's QUANTIZE (P_SQNT) as saved */
     motion_store_t motion;
 } chain_pattern_t;
 static chain_config_t chain_config;
@@ -64,7 +64,7 @@ static int chain_valid(const chain_config_t *c)
     if (c->count > CHAIN_ROWS)
         return 0;
     for (i = 0; i < c->count; i++) {
-        for (k = 0; k < NTRK; k++)
+        for (k = 0; k < CHAIN_NT; k++)
             if (c->row[i].slot[k] > CHAIN_SILENT)
                 return 0;
         if (!c->row[i].repeat || c->row[i].repeat > 16u)
@@ -92,7 +92,7 @@ static int chain_from_v9(chain_config_t *c, const chain_v9_t *o)
 static uint32_t chain_clock(const chain_row_t *r)
 {
     uint32_t k;
-    for (k = 0; k < NTRK; k++)
+    for (k = 0; k < CHAIN_NT; k++)
         if (r->slot[k] < CHAIN_SILENT)
             return k;
     return 0;
@@ -105,7 +105,7 @@ static const step_t *seq_steps(const track_t *t)
     if (!chain.running)
         return t->step;
     s = chain.lane[k];
-    return s < 4u ? chain.source[s].step[k] : chain_silent;
+    return s == CHAIN_OWN ? t->step : s < 4u ? chain.source[s].step[k] : chain_silent;
 }
 static void motion_restore(track_t *t);
 /* a section starts (chain_start, chain_tick: once a section, not per block; not inlined: off the audio ISR's loop) */
@@ -116,11 +116,13 @@ static __attribute__((noinline)) void chain_apply(void)
     chain.clk = (uint8_t)chain_clock(r);
     for (i = 0; i < NTRK; i++) {
         track_t *t = &trk[i];
-        uint32_t s = r->slot[i];
-        chain.lane[i] = (uint8_t)(s < 4u ? s : CHAIN_SILENT);
+        uint32_t s = i < CHAIN_NT ? r->slot[i] : CHAIN_OWN;   /* BOMZH LIVE: T5, T6 their own steps, from step 1 too */
+        chain.lane[i] = (uint8_t)(s < 4u || s == CHAIN_OWN ? s : CHAIN_SILENT);
         seq_release(t);
         motion_restore(t);
-        if (s < 4u) {
+        if (s == CHAIN_OWN) {
+            ;                                           /* (its own LEN DIV SWING GATE QUANTIZE, as they are) */
+        } else if (s < 4u) {
             memcpy(&t->p[P_SLEN], chain.source[s].timing[i], sizeof chain.timing[i]);
             t->p[P_SQNT] = chain.source[s].qnt[i];
         } else {

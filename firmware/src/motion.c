@@ -9,7 +9,8 @@
  * what would sound without it: the latest automation event of the pass up to that step, else the sound's own value
  * (motion_unlock). A lock lasts the whole step, its RATCH parts too; swing only moves the step's start. */
 static motion_store_t motion;
-static int16_t motion_base[NTRK][P_COUNT];
+static int16_t motion_base[NTRK][P_COUNT] __attribute__((section(".pool")));   /* (BOMZH LIVE: in the pool, the RAM's
+                                                 * headroom for six tracks; zeroed at boot as .bss) */
 static uint32_t motion_active[NTRK][(P_COUNT + 31u) / 32u];
 static uint32_t motion_locked[NTRK][(P_COUNT + 31u) / 32u];   /* the ids a lock holds now (put back at the next step) */
 static uint8_t motion_base_valid, motion_full;
@@ -96,7 +97,7 @@ static uint32_t motion_mask(uint32_t k, uint32_t m[(P_COUNT + 31u) / 32u])
 {
     uint32_t i, any = 0;
     memset(m, 0, ((P_COUNT + 31u) / 32u) * sizeof m[0]);
-    if (k >= NTRK || !((motion.on >> k) & 1u)) return 0;
+    if (k >= MOTION_NT || !((motion.on >> k) & 1u)) return 0;
     for (i = 0; i < motion.count; i++) {
         const motion_event_t *e = &motion.event[i];
         if ((e->place >> 6) != k || MOTION_ID(e) >= P_COUNT) continue;
@@ -168,7 +169,7 @@ static int motion_put(track_t *t, uint32_t step, uint32_t id, int16_t value, uin
 {
     uint32_t k = trk_index(t), i, f;
     const param_desc_t *d;
-    if (k >= NTRK || step >= NSTEP || !motion_param(id)) return 1;
+    if (k >= MOTION_NT || step >= NSTEP || !motion_param(id)) return 1;   /* (BOMZH LIVE: T5, T6 none) */
     d = param_desc_of(eng_idx(t->eng_req), id);
     if (value < d->min || value > d->max || value < -64 || value > 127) return 1;
     value = (int16_t)param_fit(d, value);                    /* (a retired KIT: the kit it plays) */
@@ -350,7 +351,8 @@ static int motion_move(track_t *t, uint32_t i, uint32_t step, uint32_t id, int16
     const param_desc_t *d;
     int32_t at;
     uint32_t f;
-    if (i >= motion.count || (motion.event[i].place >> 6) != trk_index(t) || step >= NSTEP || !motion_param(id))
+    if (trk_index(t) >= MOTION_NT || i >= motion.count || (motion.event[i].place >> 6) != trk_index(t) || step >= NSTEP ||
+        !motion_param(id))
         return 1;
     at = motion_find(t, step, id);
     if (at >= 0 && (uint32_t)at != i)

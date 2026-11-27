@@ -94,6 +94,10 @@
  *
  * Built on the Mac too (tests/project_test.c, -DPROJ_HOST): the part above the #ifndef
  * PROJ_HOST needs core.h, params.c (TP) and engines.c. */
+/* BOMZH LIVE: the formats hold four tracks (and `parts` 4 says a part's track 4), so inside this file a project's
+ * tracks are T1..T4: NPART is 4 here, put back at the end. A load leaves T5, T6 as they are; a save keeps theirs out */
+#undef NPART
+#define NPART 4
 #define PROJ_MAGIC 0x46554E41u                 /* "FUNA" (FUN10): 104 (1.5: 111) parameters, 128 motion records, nudges */
 #define PROJ_MAGIC_V9 0x46554E39u              /* "FUN9": FUN8, 64 bytes longer (the DRUM lane levels, 99 parameters) */
 #define PROJ_MAGIC_V8 0x46554E38u              /* "FUN8": FUN7 + the tracks' FM6 patches */
@@ -1450,3 +1454,7 @@ _Static_assert(sizeof(project_store_t) <= ST_PAYLOAD_MAX, "project does not fit 
 _Static_assert(sizeof(persist_t) <= ST_PAYLOAD_MAX, "settings do not fit one flash sector");
 #endif
 #endif /* PROJ_HOST */
+
+/* BOMZH LIVE: the instrument's track count again (core.h) */
+#undef NPART
+#define NPART 6

@@ -997,7 +997,7 @@ static void draw_columns(void)
         return;
     }
     if (cur_page()->graph == GR_SONG) {             /* SECTION, TRACK, its PAT (A..D, -), REPS (the section's) */
-        uint32_t row = ui.song_row < CHAIN_ROWS ? ui.song_row : CHAIN_ROWS - 1u, k = ui.song_trk % NTRK, sl;
+        uint32_t row = ui.song_row < CHAIN_ROWS ? ui.song_row : CHAIN_ROWS - 1u, k = ui.song_trk % CHAIN_NT, sl;
         int used = row < chain_config.count;
         fmt_int(val, (int32_t)row + 1);
         draw_column(0, "SEC", val, "", VAL(0u), -1, ICON_X_SONG);
@@ -1492,12 +1492,12 @@ static void confirm_text(char *a, char *b)
         if (k < chain_config.count) {
             const chain_row_t *r = &chain_config.row[k];
             uint32_t j;
-            for (j = 0; j < NTRK; j++) {
+            for (j = 0; j < CHAIN_NT; j++) {
                 b[2 * j] = r->slot[j] < CHAIN_SILENT ? (char)('A' + r->slot[j]) : '-';
                 b[2 * j + 1] = ' ';
             }
-            b[2 * NTRK] = 'X';
-            fmt_int(b + 2 * NTRK + 1, r->repeat);
+            b[2 * CHAIN_NT] = 'X';
+            fmt_int(b + 2 * CHAIN_NT + 1, r->repeat);
         }
         break;
     case CF_CLEAR_SONG:

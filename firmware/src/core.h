@@ -9,7 +9,7 @@
 
 /* ------------------------------------------------------------ sizes --- */
 #define NVOICE 8                 /* voices per part, and the budget shared by all parts */
-#define NPART 4                  /* synth parts: tracks 1..4 */
+#define NPART 6                  /* synth parts: tracks 1..6 (BOMZH LIVE; Felucca 4) */
 #define NTRK NPART               /* tracks (the formats and the protocol count these): every track is a part */
 #define NSTEP 64
 #define HALF_FRAMES 128          /* I2S half buffer: 2.9 ms at 44.1 kHz (a key waits 0..1 half, then plays 1 half later) */
@@ -230,6 +230,8 @@ static void step_set_nudge(step_t *s, int32_t v)
     s->flags = (uint8_t)((s->flags & ~SF_NUDGE) | (u & 7u) << 5 | (u >> 1 & 4u));
 }
 #define MOTION_MAX 128u          /* 1.2 (FUN10): 64 before */
+#define MOTION_NT 4u             /* BOMZH LIVE: the tracks a record's place can name (track << 6 | step in a byte): T1..T4;
+                                  * T5, T6 take no automation or locks yet */
 /* Four tracks x64 steps fit one byte. Values retain their signed parameter range (-64..127: an int8_t, 1.2).
  * param: the P_* id (< 128: P_COUNT is at most 127, project.c), bit 7 (MOTION_LOCK, 1.1) a parameter lock: the value
  * sounds on that step only and goes back after it (motion.c motion_step); without it an automation event, the
@@ -244,7 +246,10 @@ _Static_assert(sizeof(motion_store_t) == 388u, "motion disk layout (FUN10)");
  * nothing there) and its repeats (1..16). Up to 1.1 a row was {slot, repeat}, all four tracks on that slot
  * (chain_v9_t, FUN6..FUN9): it loads as a section with the four on it (song_chain.c chain_from_v9) */
 #define CHAIN_SILENT 4u
-typedef struct { uint8_t slot[NTRK], repeat; } chain_row_t;
+#define CHAIN_NT 4u                  /* BOMZH LIVE: the tracks a section names, T1..T4 (a project holds four; the format's
+                                      * rows keep their 5 bytes). T5, T6 play their own steps in a song (CHAIN_OWN) */
+#define CHAIN_OWN 5u                 /* chain.lane: the track's own steps and automation, as with no song */
+typedef struct { uint8_t slot[CHAIN_NT], repeat; } chain_row_t;
 typedef struct {
     uint8_t count, rsv[3];
     chain_row_t row[CHAIN_ROWS];
