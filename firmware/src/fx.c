@@ -509,7 +509,7 @@ static void rev_clear(void)
 #if FELUCCA_CPU2
 /* the dry mix and the sends, as each core adds its parts into them (after Jangada: mx[1] is the second core's,
  * mix_block), and a part's own block (b; mx[0].b also the fade of a reverb model change, after the parts) */
-typedef struct { int32_t l[CTL], r[CTL], c[CTL], d[CTL], v[CTL], b[CTL]; } mixsum_t;
+typedef struct { int32_t l[CTL], r[CTL], c[CTL], d[CTL], v[CTL], b[CTL], bl[CTL], br[CTL]; } mixsum_t;   /* bl br: DRUM BUS */
 static mixsum_t mx[2];
 #define mix_l (mx[0].l)
 #define mix_r (mx[0].r)
@@ -517,6 +517,8 @@ static mixsum_t mx[2];
 #define send_d (mx[0].d)
 #define send_r (mx[0].v)
 #define part_buf (mx[0].b)
+#define drum_l (mx[0].bl)                               /* DRUM BUS (BOMZH LIVE): the drum tracks' dry mix */
+#define drum_r (mx[0].br)
 #define SM_DECL , mixsum_t *sm                          /* mix_part / mix_spread: the sums they add into */
 #define SM_ARG(x) , (x)
 #define SM(f) (sm->f)
@@ -532,6 +534,8 @@ static int32_t part_buf[CTL];                            /* a part's block (mix_
 #define SM1_d send_d
 #define SM1_v send_r
 #define SM1_b part_buf
+#define SM1_bl drum_l
+#define SM1_br drum_r
 #endif
 
 /* the model changed (to rt): the old one's block fades out (HALL's stereo difference with it), its buffers are
@@ -812,6 +816,7 @@ static void events_block(uint32_t n);                    /* seq.c */
 static int32_t wet[CTL];                                 /* (the dry mix and the sends: mx[0], above) */
 #else
 static int32_t send_c[CTL], send_d[CTL], send_r[CTL], wet[CTL], mix_l[CTL], mix_r[CTL];
+static int32_t drum_l[CTL], drum_r[CTL];                /* DRUM BUS (BOMZH LIVE): the drum tracks' dry mix */
 #endif
 
 /* DUCK (BOMZH LIVE): the kick's sidechain. A KICK lane hit on any DRUM track (voice.c trk_note_on: duck_hit) pulls
@@ -839,6 +844,48 @@ static inline int32_t duck_gain(int32_t e, int32_t amt)  /* Q15: 32768 at rest *
 {
     return 32768 - (((e >> 9) * amt * 258) >> 15);      /* (e Q24 -> Q15; amt 127 -> 32766) */
 }
+/* DRUM BUS (BOMZH LIVE): the DRUM tracks' dry sound (after their level and pan; their sends go to the buses as ever)
+ * sums into drum_l / drum_r instead of the mix (mix_part, mix_spread: DRUM_BUS_OF), then through the bus's DRIVE and
+ * FILTER (drum_bus, after the parts) into the mix: one knob for all the drums. DRIVE (G_SYNC, 0..127): a soft clip as
+ * the tracks' DIST (track_dist), 0 none. FILTER (G_DRREV, -64..63): a DJ filter, the engines' TPT SVF (dsp.c) with a
+ * mild bump: left of 0 a low-pass from 16 kHz down to ~170 Hz, right of 0 a high-pass from 30 Hz up to ~2 kHz, 0
+ * none. Both 0: the drums as before, bit for bit (the same integers summed). The SVF runs on at 0 (a high-pass at
+ * its lowest), so a turn off 0 starts settled. The globals are the ids of the old SYSTEM page's SYNC and the GM drum
+ * part's REV, which nothing read */
+#define DRUM_BUS_OF(t) ((t)->engine == ENGI_DRUM)
+#define DB_K 5000                                       /* the SVF's damping, Q12 (2.0 flat .. lower a bump) */
+static struct { int32_t c1[2], c2[2]; } db;
+static __attribute__((noinline)) void drum_bus(uint32_t n)
+{
+    int32_t f = song.g[G_DRREV], d = song.g[G_SYNC], *ch[2] = {drum_l, drum_r};
+    int32_t g = 4096 + d * d * 2, mk = 30000 - d * 120, cut;
+    uint32_t i, k;
+    tsvf_t c;
+    f = clamp(f, -64, 63);
+    cut = f < 0 ? (127 << 8) + f * 368 : f * 345;       /* (CUTOFF_HZ: index 127 16 kHz, 35 ~170 Hz, 85 ~2 kHz) */
+    tsvf_coef_k(&c, cut, DB_K);
+    for (k = 0; k < 2u; k++) {
+        int32_t *x = ch[k], *o = k ? mix_r : mix_l, ic1 = db.c1[k], ic2 = db.c2[k];
+        for (i = 0; i < n; i++) {
+            int32_t y = x[i], v1, v2, v3;
+            if (d)
+                y = mulq15(softclip((((clamp(y, -230000, 230000) >> 2) * g) >> 10)), mk);
+            v3 = (clamp(y, -280000, 280000) >> 1) - ic2;   /* (>> 1, clamped: the SVF's products fit 32 bits) */
+            v1 = (c.a1 * ic1 + c.a2 * v3) >> 13;
+            v2 = ic2 + ((c.a2 * ic1 + c.a3 * v3) >> 13);
+            ic1 = clamp(2 * v1 - ic1, -150000, 150000);
+            ic2 = clamp(2 * v2 - ic2, -150000, 150000);
+            if (f < 0)
+                y = v2 << 1;                            /* low-pass */
+            else if (f > 0)
+                y = ((y >> 1) - ((DB_K * v1) >> 12) - v2) << 1;   /* high-pass: in - k band - low */
+            o[i] += y;
+        }
+        db.c1[k] = ic1;
+        db.c2[k] = ic2;
+    }
+}
+
 static __attribute__((noinline)) void duck_apply(const track_t *t, int32_t *b, int32_t *sd, uint32_t n)
 {
     uint32_t i;
@@ -874,6 +921,7 @@ static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_
     int32_t glm = (gla + glb) >> 1, grm = (gra + grb) >> 1, gld = (gla - glb) >> 1, grd = (gra - grb) >> 1;
     int32_t c = t->p[P_CHOR] * 258, dl = t->p[P_DLY] * 258, r = t->p[P_REV] * 258, pk = t->peak;
     int32_t xmax = c > dl ? c : dl;
+    int32_t *ol = DRUM_BUS_OF(t) ? SM(bl) : SM(l), *or_ = DRUM_BUS_OF(t) ? SM(br) : SM(r);   /* DRUM BUS */
     xmax = 0x7FFFFFFF / ((xmax > r ? xmax : r) | 1);
     for (i = 0; i < n; i++)
         d[i] = (d[i] << 1) - b[i];                      /* left - right */
@@ -895,8 +943,8 @@ static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_
             SM(d)[i] += mulq15(xs, dl);
         if (r)
             SM(v)[i] += mulq15(xs, r);
-        SM(l)[i] += ((x * glm) >> 12) + ((y * gld) >> 12);
-        SM(r)[i] += ((x * grm) >> 12) + ((y * grd) >> 12);
+        ol[i] += ((x * glm) >> 12) + ((y * gld) >> 12);
+        or_[i] += ((x * grm) >> 12) + ((y * grd) >> 12);
     }
     t->peak = pk;
 }
@@ -963,6 +1011,7 @@ static void mix_part(track_t *t, uint32_t n SM_DECL)
         int32_t gl = 4096 - (pan > 0 ? pan * 64 : 0), gr = 4096 + (pan < 0 ? pan * 64 : 0);
         int32_t c = t->p[P_CHOR] * 258, d = t->p[P_DLY] * 258, r = t->p[P_REV] * 258, pk = t->peak;
         int32_t xmax = c > d ? c : d;
+        int32_t *ol = DRUM_BUS_OF(t) ? SM(bl) : SM(l), *or_ = DRUM_BUS_OF(t) ? SM(br) : SM(r);   /* DRUM BUS */
         xmax = 0x7FFFFFFF / ((xmax > r ? xmax : r) | 1);   /* sends: loud chords at a high LEVEL */
         for (i = 0; i < n; i++) {
             int32_t x = ((b[i] >> 2) * lvl) >> 10, a = x < 0 ? -x : x;   /* pre-shift: 8 loud voices */
@@ -975,8 +1024,8 @@ static void mix_part(track_t *t, uint32_t n SM_DECL)
                 SM(d)[i] += mulq15(xs, d);
             if (r)
                 SM(v)[i] += mulq15(xs, r);
-            SM(l)[i] += (x * gl) >> 12;
-            SM(r)[i] += (x * gr) >> 12;
+            ol[i] += (x * gl) >> 12;
+            or_[i] += (x * gr) >> 12;
         }
         t->peak = pk;
     }
@@ -1045,7 +1094,7 @@ static void c1_parts(uint32_t arg)                      /* arg: the parts (bit k
     uint32_t i, n = arg >> 8;
     mixsum_t *sm = &mx[1];
     for (i = 0; i < n; i++)
-        sm->l[i] = sm->r[i] = sm->c[i] = sm->d[i] = sm->v[i] = 0;
+        sm->l[i] = sm->r[i] = sm->c[i] = sm->d[i] = sm->v[i] = sm->bl[i] = sm->br[i] = 0;
     for (i = 0; i < NPART; i++)
         if (arg >> i & 1u)
             mix_part(&trk[i], n, sm);
@@ -1081,7 +1130,7 @@ static void mix_block(int32_t *out, uint32_t n)
     int perf;
     int32_t mg = fx_usb_fixed ? MASTER_FULL : (int32_t)song.master_q12;   /* (USB LEVEL FIXED: MASTER after) */
     for (i = 0; i < n; i++)
-        send_c[i] = send_d[i] = send_r[i] = mix_l[i] = mix_r[i] = 0;
+        send_c[i] = send_d[i] = send_r[i] = mix_l[i] = mix_r[i] = drum_l[i] = drum_r[i] = 0;
     events_block(n);
     duck_block();                                       /* DUCK: this block's kicks (after the notes, before the parts) */
     perf = perf_begin(n);                               /* the FX hold layer at work (perform.c) */
@@ -1103,6 +1152,8 @@ static void mix_block(int32_t *out, uint32_t n)
             send_c[i] += sm->c[i];
             send_d[i] += sm->d[i];
             send_r[i] += sm->v[i];
+            drum_l[i] += sm->bl[i];
+            drum_r[i] += sm->br[i];
         }
     }
     for (i = 0; i < NPART; i++)                         /* the LFOs' blocks, part by part (voice.c) */
@@ -1111,6 +1162,7 @@ static void mix_block(int32_t *out, uint32_t n)
     for (i = 0; i < NPART; i++)                         /* (one core: as 1.6) */
         mix_part(&trk[i], n);
 #endif
+    drum_bus(n);                                        /* DRUM BUS (BOMZH LIVE): the drum tracks, into the mix */
     if (perf)
         perf_pre(mix_l, mix_r, send_d, send_r, n);
     fx_buses(send_c, send_d, send_r, wet, n);

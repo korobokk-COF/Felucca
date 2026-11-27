@@ -213,7 +213,7 @@ static const param_desc_t GP[G_COUNT] = {
      * showed the USB state), SYNC was a placeholder, CPU a reading; the USB state and the CPU load are MENU > SYSTEM >
      * INFO's now (ui_menu.c). Kept: the ids and G_COUNT are fixed by the formats and the protocol */
     [G_MIDI] = PE("MIDI", N_MIDI_INPUT, 0),
-    [G_SYNC] = PE("SYNC", N_DASH, 0),
+    [G_SYNC] = PD("DRIVE", F_PCT, 0, 127, 0),   /* BOMZH LIVE: the DRUM BUS's DRIVE (fx.c drum_bus); was a placeholder */
     /* MIDI IN's routing, edited on MENU > MIDI > MIDI IN (1.2: menu_items.c MI_MIDIIN; up to 1.1.5 GLO > SYSTEM ROUT),
      * stored with the project as before. (was "--": stored 0 = CH1-4, as MIDI IN always was) */
     [G_ROUTE] = PE("ROUT", N_ROUTE, 0),
@@ -232,7 +232,7 @@ static const param_desc_t GP[G_COUNT] = {
      * on any part). On no page; kept so the ids and G_COUNT, which the project format and the
      * editor protocol depend on, do not move */
     [G_DRLVL] = PD("D.REL", F_TIME, 55, 127, 73),   /* BOMZH LIVE: DUCK's release (fx.c duck_block), ~200 ms */
-    [G_DRREV] = PD("-", F_INT, 0, 0, 0),
+    [G_DRREV] = PD("FILT", F_BIPCT, -64, 63, 0),   /* BOMZH LIVE: the DRUM BUS's DJ FILTER (fx.c drum_bus) */
 };
 
 static const param_desc_t *track_desc(const track_t *t, uint32_t id)
@@ -470,6 +470,7 @@ static const page_t PAGES[] = {
     {"DLY", FAM_FX, SC_GLOBAL, GR_NONE, {G_DTIME, G_DFDBK, G_DCOLOR, G_DMIX}},
     {"REVERB", FAM_FX, SC_GLOBAL, GR_NONE, {G_RTYPE, G_RSIZE, G_RDAMP, 0xFF}},   /* TYPE: ROOM / SPRING / HALL */
     {"CHO+DUCK", FAM_FX, SC_GLOBAL, GR_NONE, {G_CRATE, G_CDEPTH, G_DRLVL, 0xFF}},   /* BOMZH LIVE: + DUCK's release */
+    {"DRUM BUS", FAM_FX, SC_GLOBAL, GR_NONE, {G_DRREV, G_SYNC, 0xFF, 0xFF}},   /* BOMZH LIVE: FILT DRIVE (fx.c drum_bus) */
     {"SCL", FAM_SCL, SC_TRACK, GR_SCALE, {P_ROOT, P_SCALE, P_QUANT, P_TRANS}},
     {"CHORD", FAM_SCL, SC_TRACK, GR_CHORD, {P_CHRD, P_VOIC, 0xFF, 0xFF}},   /* SCL again: the chord keys (chord.c) */
     {"EDIT 1", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E0, P_E1, P_E2, P_E3}},
