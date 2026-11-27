@@ -78,10 +78,13 @@ static void tl_order(track_t *t, uint32_t len, const uint8_t *src)
         to[src[j]] = (uint8_t)j;
     }
     f = motion_guard();
-    for (j = 0; j < motion.count; j++) {
-        motion_event_t *e = &motion.event[j];
-        if ((e->place >> 6) == k && (e->place & 63u) < len)
-            e->place = (uint8_t)(k << 6 | to[e->place & 63u]);
+    {
+        motion_store_t *ms = mo_s(k);                   /* (BOMZH LIVE: T5 T6's own store) */
+        for (j = 0; j < ms->count; j++) {
+            motion_event_t *e = &ms->event[j];
+            if ((e->place >> 6) == mo_q(k) && (e->place & 63u) < len)
+                e->place = (uint8_t)(mo_q(k) << 6 | to[e->place & 63u]);
+        }
     }
     motion_unguard(f);
 }
@@ -481,12 +484,13 @@ static motion_store_t tl_mo __attribute__((section(".pool")));   /* the track's 
  * 0 = they do not fit the MOTION_MAX */
 static int tl_motion_plan(track_t *t, uint32_t lo, uint32_t hi, uint32_t cn, uint32_t by)
 {
-    uint32_t k = trk_index(t), i, f, n = 0, ok = 1;
+    const motion_store_t *ms = mo_s(trk_index(t));    /* (BOMZH LIVE: T5 T6's own store) */
+    uint32_t k = mo_q(trk_index(t)), i, f, n = 0, ok = 1;
     f = motion_guard();
     memset(&tl_mo, 0, sizeof tl_mo);
-    tl_mo.on = motion.on & (uint8_t)(1u << k);
-    for (i = 0; i < motion.count; i++) {
-        const motion_event_t *e = &motion.event[i];
+    tl_mo.on = ms->on & (uint8_t)(1u << k);
+    for (i = 0; i < ms->count; i++) {
+        const motion_event_t *e = &ms->event[i];
         uint32_t s = e->place & 63u;
         if ((e->place >> 6) != k || (s >= lo && s < hi))
             continue;
@@ -500,7 +504,7 @@ static int tl_motion_plan(track_t *t, uint32_t lo, uint32_t hi, uint32_t cn, uin
             n++;
         }
     }
-    if (motion.count - motion_count(t) + n > MOTION_MAX)
+    if (ms->count - motion_count(t) + n > MOTION_MAX)
         ok = 0;
     tl_mo.count = (uint8_t)(n < MOTION_MAX ? n : MOTION_MAX);
     motion_unguard(f);

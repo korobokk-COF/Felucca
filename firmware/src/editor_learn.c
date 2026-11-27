@@ -17,7 +17,7 @@ static void ed_learn_list(void)
             ed_b(0); ed_b(0); ed_b(0); ed_b(0);
             continue;
         }
-        ed_b(1); ed_b(e & 127u); ed_b((e >> 7) & 3u); ed_b(id);
+        ed_b(1); ed_b(e & 127u); ed_b(ML_TRK(i, e)); ed_b(id);   /* (BOMZH LIVE: 0..5) */
     }
 }
 static int ed_learn_handle(uint32_t cmd, const uint8_t *a, uint32_t n)

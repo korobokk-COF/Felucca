@@ -231,7 +231,7 @@ static void step_set_nudge(step_t *s, int32_t v)
 }
 #define MOTION_MAX 128u          /* 1.2 (FUN10): 64 before */
 #define MOTION_NT 4u             /* BOMZH LIVE: the tracks a record's place can name (track << 6 | step in a byte): T1..T4;
-                                  * T5, T6 take no automation or locks yet */
+                                  * T5, T6 keep theirs in a store of their own (motion.c motion_x) */
 /* Four tracks x64 steps fit one byte. Values retain their signed parameter range (-64..127: an int8_t, 1.2).
  * param: the P_* id (< 128: P_COUNT is at most 127, project.c), bit 7 (MOTION_LOCK, 1.1) a parameter lock: the value
  * sounds on that step only and goes back after it (motion.c motion_step); without it an automation event, the

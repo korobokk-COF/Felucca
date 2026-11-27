@@ -1537,7 +1537,7 @@ static void graph_events(void)
             continue;
         }
         {
-            const motion_event_t *e = &motion.event[c & 0xFFu];
+            const motion_event_t *e = &MO_SEL->event[c & 0xFFu];
             uint32_t id = MOTION_ID(e), lock = (e->param & MOTION_LOCK) != 0u;
             char b[16], nm[12];
             const char *unit;

@@ -197,7 +197,7 @@ static uint32_t ev_list(uint16_t *rw)
             if ((k == 3u ? ui.ev_vel && ev_vel_row(&t->step[s]) : !ev_sdef(&t->step[s], SK[k])) ||
                 ui.ev_keep == EVC(SK[k], s))
                 rw[n++] = EVC(SK[k], s);
-        for (; j < m && (motion.event[idx[j]].place & 63u) == s; j++)
+        for (; j < m && (MO_SEL->event[idx[j]].place & 63u) == s; j++)
             rw[n++] = EVC(EVK_REC, idx[j]);
     }
     rw[n++] = EVC(EVK_ADD, 0);
@@ -216,7 +216,7 @@ static uint32_t ev_cur(uint16_t *rw, uint32_t *np)
 static uint32_t ev_step_of(uint32_t c)
 {
     uint32_t k = c >> 8, a = c & 0xFFu;
-    return k == EVK_REC ? motion.event[a].place & 63u : k == EVK_ADD ? ui.ev_step : k == EVK_QNT ? 0u : a;
+    return k == EVK_REC ? MO_SEL->event[a].place & 63u : k == EVK_ADD ? ui.ev_step : k == EVK_QNT ? 0u : a;
 }
 
 /* the page opened, or the track or its sound changed: + ADD's step and parameter inside what the track has */
@@ -259,8 +259,8 @@ static uint32_t ev_sig(void)
     for (i = 0; i < n; i++) {
         c = rw[i];
         if (c >> 8 == EVK_REC)
-            c ^= (uint32_t)motion.event[c & 0xFFu].place << 24 | (uint32_t)motion.event[c & 0xFFu].param << 16 |
-                 (uint32_t)(uint16_t)motion.event[c & 0xFFu].value << 8;
+            c ^= (uint32_t)MO_SEL->event[c & 0xFFu].place << 24 | (uint32_t)MO_SEL->event[c & 0xFFu].param << 16 |
+                 (uint32_t)(uint16_t)MO_SEL->event[c & 0xFFu].value << 8;
         else if (ev_skd(c >> 8))
             c ^= (uint32_t)ev_sval(&t->step[c & 0xFFu], c >> 8) << 16;
         h = (h ^ c) * 16777619u;
@@ -280,7 +280,7 @@ static const char *ev_act_name(void)
         return ui.ev_id != EV_VEL ? "ADD" : ui.ev_vel ? "HIDE" : "SHOW";
     if (k != EVK_REC)
         return "--";
-    return (motion.event[c & 0xFFu].param & MOTION_LOCK) ? "AUTO" : "LOCK";   /* what OCT+ turns it into */
+    return (MO_SEL->event[c & 0xFFu].param & MOTION_LOCK) ? "AUTO" : "LOCK";   /* what OCT+ turns it into */
 }
 static int ev_act_ready(void)
 {
@@ -291,7 +291,7 @@ static int ev_act_ready(void)
     if (k == EVK_TOP)
         return motion_count(TSEL) != 0u;
     if (k == EVK_ADD)
-        return ev_sid(ui.ev_id) || (motion.count < MOTION_MAX && ev_id_ok(TSEL, ui.ev_id));
+        return ev_sid(ui.ev_id) || (MO_SEL->count < MOTION_MAX && ev_id_ok(TSEL, ui.ev_id));
     return k == EVK_REC;
 }
 
@@ -387,7 +387,7 @@ static void ev_knob(uint32_t slot, int32_t s)
         return;
     }
     i = c & 0xFFu;
-    e = &motion.event[i];
+    e = &MO_SEL->event[i];
     step = e->place & 63u;
     id = MOTION_ID(e);
     if (slot == 1u) {                                   /* the next step where its parameter is free */
@@ -476,7 +476,7 @@ static void ev_oct(void)
             ui_message("ALREADY LISTED");
             return;
         }
-        if (motion.count >= MOTION_MAX) {
+        if (MO_SEL->count >= MOTION_MAX) {
             ui_message("AUTOMATION FULL");
             return;
         }
@@ -489,7 +489,7 @@ static void ev_oct(void)
         return;
     }
     if (k == EVK_REC) {
-        const motion_event_t e = motion.event[c & 0xFFu];
+        const motion_event_t e = MO_SEL->event[c & 0xFFu];
         uint32_t lock = !(e.param & MOTION_LOCK);
         motion_undo_take(t, 0);
         (void)motion_put(t, e.place & 63u, MOTION_ID(&e), e.value, lock ? MOTION_LOCK : 0u);
@@ -518,7 +518,7 @@ static void ev_delete(void)
     if (ev_busy())
         return;
     if (k == EVK_REC) {
-        e = &motion.event[c & 0xFFu];
+        e = &MO_SEL->event[c & 0xFFu];
         motion_undo_take(t, 0);
         motion_delete_event(t, e->place & 63u, MOTION_ID(e));
     } else {

@@ -1135,7 +1135,8 @@ static __attribute__((noinline)) uint32_t seq_time(track_t *t, uint32_t idx, uin
 static const motion_store_t *chain_motion(const track_t *t)
 {
     uint32_t s = chain.lane[trk_index(t)];
-    return !chain.running || s == CHAIN_OWN ? &motion : s < 4u ? &chain.source[s].motion : 0;   /* (CHAIN_OWN: T5, T6) */
+    return !chain.running || s == CHAIN_OWN ? mo_s(trk_index(t)) : s < 4u ? &chain.source[s].motion : 0;   /* (CHAIN_OWN:
+                                                         * T5, T6: their own store, motion_x) */
 }
 
 /* step idx plays: its chance (the one roll, as seq_step made it: a step that does not play applies no lock), the

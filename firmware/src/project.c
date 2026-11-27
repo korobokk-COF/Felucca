@@ -865,11 +865,13 @@ static void proj_fetch(uint32_t slot)
  * (OBJ_ASX). It names the record it belongs to by that record's hash (its last 4 bytes, main_sum): a project saved by
  * Felucca, or a save torn between the two writes, finds no matching one, and T5, T6 load as their power-on sounds with
  * no steps (as CLEAR ALL leaves them). Their values, engine, sound, steps and FM6 patch, laid out as this build keeps
- * them (np, the step's size: another build's record does not load). No automation of theirs yet (core.h MOTION_NT).
- * Written after the project's own record (a save, an autosave, a rename: then with the new hash), erased with it */
+ * them (np, the step's size: another build's record does not load), and their automation and locks (motion.c motion_x,
+ * BMZ2; a BMZ1 record, before it, loads with none). Written after the project's own record (a save, an autosave, a
+ * rename: then with the new hash), erased with it */
 #define PX_T0 4u                                        /* (project.c's NTRK is four: trk[4], trk[5] are T5, T6) */
 #define PX_N 2u
-#define PX_MAGIC 0x315A4D42u                            /* "BMZ1" */
+#define PX_MAGIC 0x325A4D42u                            /* "BMZ2" (with motion_x) */
+#define PX_MAGIC1 0x315A4D42u                           /* "BMZ1": no automation */
 typedef struct {
     int16_t p[P_COUNT];
     uint8_t engine, preset, rsv[2];
@@ -880,8 +882,15 @@ typedef struct {
     uint32_t magic, size, main_sum;
     uint8_t np, nstep, sstep, rsv;
     px_trk_t t[PX_N];
+    motion_store_t motion;                              /* motion_x: T5 T6's records, their place's track 0, 1 */
     uint32_t sum;
 } proj_ext_t;
+typedef struct {                                        /* BMZ1 */
+    uint32_t magic, size, main_sum;
+    uint8_t np, nstep, sstep, rsv;
+    px_trk_t t[PX_N];
+    uint32_t sum;
+} proj_ext1_t;
 /* payload from 256 in its sector, clear of bytes 0xF00.. (the update loader's record place: fm1_flash.h) */
 _Static_assert(sizeof(proj_ext_t) <= 0xF00u - 256u, "T5 T6 record fits its sector");
 static proj_ext_t px_buf __attribute__((section(".pool")));
@@ -911,15 +920,30 @@ static void px_capture(proj_ext_t *x, uint32_t main_sum)
         memcpy(x->t[k].step, t->step, sizeof t->step);
         fm6_pack(fm6_patch[PX_T0 + k], x->t[k].fm6);
     }
+    x->motion = motion_x;
     motion_unguard(f);
     x->sum = px_hash(x);
 }
-static int px_ok(const proj_ext_t *x, int n, uint32_t main_sum)
+static int px_ok(proj_ext_t *x, int n, uint32_t main_sum)   /* (a BMZ1 record: made a BMZ2 one, no motion, in place) */
 {
     uint32_t k, i;
+    if (n == (int)sizeof(proj_ext1_t) && x->magic == PX_MAGIC1) {
+        proj_ext1_t *o = (proj_ext1_t *)x;
+        if (o->size != sizeof *o || o->sum != proj_hash(o, sizeof *o - 4u))
+            return 0;
+        memset(&x->motion, 0, sizeof x->motion);        /* (t[] is where it was: the same offset) */
+        x->magic = PX_MAGIC;
+        x->size = sizeof *x;
+        x->sum = px_hash(x);
+        n = (int)sizeof *x;
+    }
     if (n != (int)sizeof *x || x->magic != PX_MAGIC || x->size != sizeof *x || x->main_sum != main_sum ||
-        x->np != P_COUNT || x->nstep != NSTEP || x->sstep != sizeof(step_t) || x->sum != px_hash(x))
+        x->np != P_COUNT || x->nstep != NSTEP || x->sstep != sizeof(step_t) || x->sum != px_hash(x) ||
+        !motion_valid(&x->motion) || (x->motion.on & ~3u))
         return 0;
+    for (i = 0; i < x->motion.count; i++)
+        if ((x->motion.event[i].place >> 6) >= PX_N)
+            return 0;
     for (k = 0; k < PX_N; k++) {
         if (x->t[k].engine >= NENGINES || !eng_ok(x->t[k].engine))
             return 0;
@@ -933,8 +957,16 @@ static int px_ok(const proj_ext_t *x, int n, uint32_t main_sum)
  * project_restore_runtime (the transport stopped) */
 static void px_apply(const proj_ext_t *x)
 {
-    uint32_t k, i;
+    uint32_t k, i, f;
     undo_depth++;                                       /* (no undo copy of these loads, as the project's) */
+    for (k = 0; k < PX_N; k++)
+        motion_restore(&trk[PX_T0 + k]);
+    f = motion_guard();
+    if (x)
+        motion_x = x->motion;
+    else
+        memset(&motion_x, 0, sizeof motion_x);
+    motion_unguard(f);
     for (k = 0; k < PX_N; k++) {
         track_t *t = &trk[PX_T0 + k];
         uint32_t e = x ? x->t[k].engine : trk_def_engine(PX_T0 + k);
@@ -1527,6 +1559,7 @@ static uint32_t autosave_sig(void)
         h = as_mix(h, fm6_patch[i], sizeof fm6_patch[i]);
     }
     h = as_mix(h, &motion, sizeof motion);
+    h = as_mix(h, &motion_x, sizeof motion_x);          /* (BOMZH LIVE: T5 T6's automation) */
     h = as_mix(h, &chain_config, sizeof chain_config);
     return as_mix(h, proj_name, sizeof proj_name);
 }

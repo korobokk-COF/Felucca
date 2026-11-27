@@ -1048,7 +1048,7 @@ static void draw_columns(void)
             fmt_int(val + str_len(val), (int32_t)n - 3);
         }
         step = ev_step_of(c);
-        id = k == EVK_REC ? MOTION_ID(&motion.event[c & 0xFFu]) : k == EVK_ADD ? ui.ev_id :
+        id = k == EVK_REC ? MOTION_ID(&MO_SEL->event[c & 0xFFu]) : k == EVK_ADD ? ui.ev_id :
              k == EVK_CHANCE ? EV_CHANCE : k == EVK_RATCH ? EV_RATCH : k == EVK_VEL ? EV_VEL : EV_NUDGE;
         draw_column(0, "ROW", val, "", VAL(0u), -1, ICON_AUTO);
         fmt_int(val, (int32_t)step + 1);
@@ -1097,10 +1097,10 @@ static void draw_columns(void)
                         ((int32_t)sv - 1) * 333, sk == EVK_CHANCE ? ICON_PROB : ICON_X_REPEAT);
             return;
         }
-        v = k == EVK_REC ? motion.event[c & 0xFFu].value : motion_base_value(t, id);
+        v = k == EVK_REC ? MO_SEL->event[c & 0xFFu].value : motion_base_value(t, id);
         d = track_desc(t, id);
         param_format(d, v, val, &unit);
-        draw_column(3, k == EVK_ADD ? "VALUE" : (motion.event[c & 0xFFu].param & MOTION_LOCK) ? "LOCK" : "AUTO", val, unit,
+        draw_column(3, k == EVK_ADD ? "VALUE" : (MO_SEL->event[c & 0xFFu].param & MOTION_LOCK) ? "LOCK" : "AUTO", val, unit,
                     k != EVK_ADD ? VAL(3u) : T_DIM, RATIO(d, enum_rank(d, v)), param_icon(d, v));
         return;
     }

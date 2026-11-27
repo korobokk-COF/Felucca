@@ -10,6 +10,7 @@
  * replaces both. The editor reads and edits it (editor_learn.c). Its state: ui.ml (ui.c) */
 typedef char ml_row_free[FAV_ENGINES <= 14 ? 1 : -1];   /* (factory[14]: no engine's favourites; favorites.c) */
 static uint8_t *const ml_tab = favorites.factory[14];
+static uint8_t *const ml_hi = &favorites.factory[15][14];   /* (BOMZH LIVE: midi_control.c ML_TRK) */
 static volatile uint8_t *const ml_io = ui.ml.io;         /* (midi_control.c ml_arm, ml_heard) */
 
 static uint32_t ml_code(uint32_t id) { return id >= P_E0 ? ML_E0 + id - P_E0 : id + 1u; }
@@ -21,12 +22,20 @@ static void ml_put(uint32_t i, uint32_t e)       /* (the ISR reads the two bytes
     ml_tab[2u * i + 1u] = (uint8_t)(e >> 8);
     fm1_irq_on();
 }
+/* entry i's track bit 2 (BOMZH LIVE: T5 T6), set with the entry and cleared with it */
+static void ml_put_hi(uint32_t i, uint32_t hi)
+{
+    uint8_t b = (uint8_t)(1u << (i & 7u));
+    fm1_irq_off();
+    ml_hi[i >> 3] = (uint8_t)(hi ? ml_hi[i >> 3] | b : ml_hi[i >> 3] & ~b);
+    fm1_irq_on();
+}
 /* the CC of parameter id on track k, + 1; 0 none */
 static uint32_t ml_cc_of(uint32_t k, uint32_t id)
 {
     uint32_t i, e;
     for (i = 0; i < ML_N; i++)
-        if (((e = ml_get(i)) >> 9) == ml_code(id) && ((e >> 7) & 3u) == k)
+        if (((e = ml_get(i)) >> 9) == ml_code(id) && ML_TRK(i, e) == k)
             return (e & 127u) + 1u;
     return 0;
 }
@@ -45,8 +54,9 @@ static int ml_drop(uint32_t cc, uint32_t k, uint32_t id)
     for (i = 0; i < ML_N; i++) {
         if (!((e = ml_get(i)) >> 9))
             continue;
-        if ((e & 127u) == cc || ((e >> 9) == ml_code(id) && ((e >> 7) & 3u) == k)) {
+        if ((e & 127u) == cc || ((e >> 9) == ml_code(id) && ML_TRK(i, e) == k)) {
             ml_put(i, 0);
+            ml_put_hi(i, 0);
             gone = 1;
         }
     }
@@ -56,12 +66,13 @@ static int ml_drop(uint32_t cc, uint32_t k, uint32_t id)
 static uint32_t ml_learn(uint32_t cc, uint32_t k, uint32_t id)
 {
     uint32_t i;
-    if (!ml_free_cc(cc) || k >= 4u || id >= P_COUNT)    /* (BOMZH LIVE: an entry holds the track in 2 bits: T1..T4) */
+    if (!ml_free_cc(cc) || k >= NTRK || id >= P_COUNT)
         return 2;
     (void)ml_drop(cc, k, id);
     for (i = 0; i < ML_N; i++)
         if (!(ml_get(i) >> 9)) {
-            ml_put(i, cc | k << 7 | ml_code(id) << 9);
+            ml_put_hi(i, k >= 4u);                      /* (BOMZH LIVE: T5 T6: tracks 0, 1 and the bit) */
+            ml_put(i, cc | (k & 3u) << 7 | ml_code(id) << 9);
             return 1;
         }
     return 0;
@@ -71,11 +82,13 @@ static uint32_t ml_learn(uint32_t cc, uint32_t k, uint32_t id)
 static int ml_clear_all(void)
 {
     uint32_t i, n = 0;
-    for (i = 0; i < ML_N; i++)
+    for (i = 0; i < ML_N; i++) {
         if (ml_get(i)) {
             ml_put(i, 0);
             n++;
         }
+        ml_put_hi(i, 0);                                /* (BOMZH LIVE) */
+    }
     if (n) {
         ui.foot_sig = 0;
         settings_save();                         /* (deferred while playing) */

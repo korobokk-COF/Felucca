@@ -252,6 +252,10 @@ static void midi_cc_set(track_t *t, uint32_t id, uint32_t value)
 #define ML_E0 120u
 typedef char ml_ids_fit[P_E0 < ML_E0 && P_COUNT - P_E0 == 8 ? 1 : -1];
 static uint8_t *const ml_tab;               /* favorites.factory[14] (midi_learn.c: a build without the UI, none) */
+/* BOMZH LIVE: an entry's track is 2 bits; T5 T6 are tracks 0, 1 with entry i's bit set in ml_hi (favorites.factory[15]
+ * [14..15], bytes no setting used: 0 in every older one = T1..T4). ML_TRK: entry i (value e)'s track */
+static uint8_t *const ml_hi;
+#define ML_TRK(i, e) (((e) >> 7 & 3u) + (ml_hi && (ml_hi[(i) >> 3] >> ((i) & 7u) & 1u) ? 4u : 0u))
 static volatile uint8_t *const ml_io;       /* ui.ml.io (midi_learn.c; not globals here: the ISR's data keeps its layout) */
 #define ml_arm (ml_io[0])                   /* the UI waits for a CC (MIDI LEARN with a parameter picked) */
 #define ml_heard (ml_io[1])                 /* .. the CC that came meanwhile, + 1 (0 none) */
@@ -279,7 +283,7 @@ static int __attribute__((noinline)) midi_learned(uint32_t cc, uint32_t value)
         e = ml_tab[2u * i] | (uint32_t)ml_tab[2u * i + 1u] << 8;
         if ((e >> 9) && (e & 127u) == cc) {
             if ((id = ml_id(e >> 9)) < P_COUNT)
-                midi_cc_set(&trk[(e >> 7) & 3u], id, value);
+                midi_cc_set(&trk[ML_TRK(i, e) % NTRK], id, value);
             hit = 1;
         }
     }

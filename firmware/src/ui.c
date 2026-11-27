@@ -908,16 +908,18 @@ static uint32_t track_sig(const track_t *t)      /* the sound (an FM6 track's pa
     uint8_t id[3] = {t->eng_req, t->preset, t->user};
     uint32_t h = fnv(fnv(steps_sig(t), t->p, sizeof t->p), id, 3), k = trk_index(t);
     h = fnv(h, fm6_patch[k], sizeof fm6_patch[k]); /* (a patch the editor sent between two loads) */
-    for (uint32_t j = 0; j < motion.count; j++)
-        if ((motion.event[j].place >> 6) == k) h = fnv(h, &motion.event[j], sizeof motion.event[j]);
-    return h ^ ((motion.on >> k) & 1u);
+    const motion_store_t *ms = mo_s(k);                /* (BOMZH LIVE: T5 T6's own store) */
+    for (uint32_t j = 0; j < ms->count; j++)
+        if ((ms->event[j].place >> 6) == mo_q(k)) h = fnv(h, &ms->event[j], sizeof ms->event[j]);
+    return h ^ ((ms->on >> mo_q(k)) & 1u);
 }
 static uint32_t motion_sig(const track_t *t)     /* the track's motion only (the sound moves while it plays) */
 {
     uint32_t h = 2166136261u, k = trk_index(t);
-    for (uint32_t j = 0; j < motion.count; j++)
-        if ((motion.event[j].place >> 6) == k) h = fnv(h, &motion.event[j], sizeof motion.event[j]);
-    return h ^ ((motion.on >> k) & 1u);
+    const motion_store_t *ms = mo_s(k);                /* (BOMZH LIVE: T5 T6's own store) */
+    for (uint32_t j = 0; j < ms->count; j++)
+        if ((ms->event[j].place >> 6) == mo_q(k)) h = fnv(h, &ms->event[j], sizeof ms->event[j]);
+    return h ^ ((ms->on >> mo_q(k)) & 1u);
 }
 /* the track's pattern as a song plays it from a slot: the steps, LEN DIV SWING GATE, QUANTIZE, the automation (the
  * editable ones: while a song plays the header shows the section's slot instead) */

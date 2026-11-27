@@ -372,15 +372,15 @@ static void ed_motion_reply(uint32_t k, uint32_t rc, uint32_t kinds, uint32_t fu
     } else {
         ed_b(n); ed_b(64u);
     }
-    for (i = j = 0; i < motion.count && j < n; i++) {
-        const motion_event_t *e = &motion.event[i];
-        if ((e->place >> 6) != k) continue;
+    for (i = j = 0; i < mo_s(k)->count && j < n; i++) {   /* (BOMZH LIVE: track k's store) */
+        const motion_event_t *e = &mo_s(k)->event[i];
+        if ((e->place >> 6) != mo_q(k)) continue;
         ed_b(e->place & 63u); ed_b(MOTION_ID(e)); ed_v(e->value);
         j++;
     }
-    for (i = j = 0; kinds && i < motion.count && j < n; i++)
-        if ((motion.event[i].place >> 6) == k) {
-            ed_b((motion.event[i].param & MOTION_LOCK) != 0u);
+    for (i = j = 0; kinds && i < mo_s(k)->count && j < n; i++)
+        if ((mo_s(k)->event[i].place >> 6) == mo_q(k)) {
+            ed_b((mo_s(k)->event[i].param & MOTION_LOCK) != 0u);
             j++;
         }
 }
