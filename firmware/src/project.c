@@ -859,6 +859,137 @@ static void proj_fetch(uint32_t slot)
 }
 #endif
 
+/* ---- BOMZH LIVE: T5 and T6 beside a project ----------------------------------------------------------------------
+ * A project's own record (FUN10) holds four tracks and fills its flash object, so T5 and T6 go in a record of their
+ * own beside it: proj_ext_t, an object per project slot (storage.c OBJ_PROJX0 + slot) and one beside the autosave
+ * (OBJ_ASX). It names the record it belongs to by that record's hash (its last 4 bytes, main_sum): a project saved by
+ * Felucca, or a save torn between the two writes, finds no matching one, and T5, T6 load as their power-on sounds with
+ * no steps (as CLEAR ALL leaves them). Their values, engine, sound, steps and FM6 patch, laid out as this build keeps
+ * them (np, the step's size: another build's record does not load). No automation of theirs yet (core.h MOTION_NT).
+ * Written after the project's own record (a save, an autosave, a rename: then with the new hash), erased with it */
+#define PX_T0 4u                                        /* (project.c's NTRK is four: trk[4], trk[5] are T5, T6) */
+#define PX_N 2u
+#define PX_MAGIC 0x315A4D42u                            /* "BMZ1" */
+typedef struct {
+    int16_t p[P_COUNT];
+    uint8_t engine, preset, rsv[2];
+    step_t step[NSTEP];
+    uint8_t fm6[FM6_PACKED];
+} px_trk_t;
+typedef struct {
+    uint32_t magic, size, main_sum;
+    uint8_t np, nstep, sstep, rsv;
+    px_trk_t t[PX_N];
+    uint32_t sum;
+} proj_ext_t;
+/* payload from 256 in its sector, clear of bytes 0xF00.. (the update loader's record place: fm1_flash.h) */
+_Static_assert(sizeof(proj_ext_t) <= 0xF00u - 256u, "T5 T6 record fits its sector");
+static proj_ext_t px_buf __attribute__((section(".pool")));
+static uint32_t px_main_sum(const project_store_t *r)  /* a stored project's hash: its record's last 4 bytes */
+{
+    uint32_t v;
+    memcpy(&v, r->raw + PROJ_STORE_SIZE - 4u, 4);
+    return v;
+}
+static uint32_t px_hash(const proj_ext_t *x) { return proj_hash(x, sizeof *x - 4u); }
+static void px_capture(proj_ext_t *x, uint32_t main_sum)
+{
+    uint32_t k, j, f = motion_guard();
+    memset(x, 0, sizeof *x);
+    x->magic = PX_MAGIC;
+    x->size = sizeof *x;
+    x->main_sum = main_sum;
+    x->np = (uint8_t)P_COUNT;
+    x->nstep = (uint8_t)NSTEP;
+    x->sstep = (uint8_t)sizeof(step_t);
+    for (k = 0; k < PX_N; k++) {
+        const track_t *t = &trk[PX_T0 + k];
+        for (j = 0; j < P_COUNT; j++)
+            x->t[k].p[j] = motion_base_value(t, j);
+        x->t[k].engine = t->eng_req;
+        x->t[k].preset = t->preset;
+        memcpy(x->t[k].step, t->step, sizeof t->step);
+        fm6_pack(fm6_patch[PX_T0 + k], x->t[k].fm6);
+    }
+    motion_unguard(f);
+    x->sum = px_hash(x);
+}
+static int px_ok(const proj_ext_t *x, int n, uint32_t main_sum)
+{
+    uint32_t k, i;
+    if (n != (int)sizeof *x || x->magic != PX_MAGIC || x->size != sizeof *x || x->main_sum != main_sum ||
+        x->np != P_COUNT || x->nstep != NSTEP || x->sstep != sizeof(step_t) || x->sum != px_hash(x))
+        return 0;
+    for (k = 0; k < PX_N; k++) {
+        if (x->t[k].engine >= NENGINES || !eng_ok(x->t[k].engine))
+            return 0;
+        for (i = 0; i < FM6_PACKED; i++)
+            if (x->t[k].fm6[i] > 127u)
+                return 0;
+    }
+    return 1;
+}
+/* x -> T5, T6; x 0: their power-on sounds, no steps (CLEAR ALL, a project without a record of theirs). After
+ * project_restore_runtime (the transport stopped) */
+static void px_apply(const proj_ext_t *x)
+{
+    uint32_t k, i;
+    undo_depth++;                                       /* (no undo copy of these loads, as the project's) */
+    for (k = 0; k < PX_N; k++) {
+        track_t *t = &trk[PX_T0 + k];
+        uint32_t e = x ? x->t[k].engine : trk_def_engine(PX_T0 + k);
+        uint8_t v[FP_SIZE + 1u];
+        fm1_irq_off();
+        t->eng_req = (uint8_t)e;
+        t->user = 0;
+        for (i = 0; i < P_COUNT; i++) {
+            const param_desc_t *d = param_desc_of(e, i);
+            t->p[i] = (int16_t)param_fit(d, x ? x->t[k].p[i] : d->def);
+        }
+        t->preset = (uint8_t)(x && ENGINES[e]->npresets ? x->t[k].preset % ENGINES[e]->npresets : 0u);
+        if (x) {
+            memcpy(t->step, x->t[k].step, sizeof t->step);
+            proj_steps(t->step);
+        }
+        fm1_irq_on();
+        fm6_unpack(x ? x->t[k].fm6 : FM6_INIT, v);
+        fm6_set_patch(PX_T0 + k, v);
+        fm6_adopt(PX_T0 + k);
+        if (!x) {
+            apply_preset_to(t, TRK_DEF[PX_T0 + k][1]);
+            track_defaults_steps(t);
+        }
+        pat_sig[PX_T0 + k] = x ? ~steps_sig(t) : steps_sig(t);
+    }
+    undo_depth--;
+    ui.force = 1;
+}
+/* T5, T6 now, beside the project record whose hash is main_sum, into obj; 0 written */
+static int px_save(uint32_t obj, uint32_t main_sum)
+{
+#if FELUCCA_FLASH
+    if (!flash_ok)
+        return 1;
+    px_capture(&px_buf, main_sum);
+    return st_save(obj, &px_buf, sizeof px_buf);
+#else
+    (void)obj; (void)main_sum;
+    return 1;
+#endif
+}
+/* obj's record, if it belongs to the project record of hash main_sum, -> T5, T6; else their power-on sounds */
+static void px_load(uint32_t obj, uint32_t main_sum)
+{
+    int n = -1;
+#if FELUCCA_FLASH
+    if (flash_ok)
+        n = st_load(obj, &px_buf, sizeof px_buf);
+#else
+    (void)obj;
+#endif
+    px_apply(px_ok(&px_buf, n, main_sum) ? &px_buf : 0);
+}
+
 static void project_capture(project_t *p)
 {
     uint32_t i;
@@ -915,6 +1046,10 @@ static int project_save_as(uint32_t slot, const char *name)
         proj_cur = (uint8_t)(slot & 3u);
         pat_from_set((slot & 3u) + 1u);
         proj_kept_now();
+        if (px_save(OBJ_PROJX0 + (slot & 3u), px_main_sum(&proj_wire))) {   /* BOMZH LIVE: T5, T6 beside it */
+            ui_message("SAVE ERROR T5 T6");
+            return 2;
+        }
         ui_message("SAVED");
         return 0;
     }
@@ -1005,6 +1140,14 @@ static int project_rename(uint32_t slot, const char *name)
         ui_message("SAVE ERROR");
         return 2;
     }
+    if (flash_ok) {                                     /* BOMZH LIVE: T5 T6's record now names the renamed one */
+        int n = st_load(OBJ_PROJX0 + (slot & 3u), &px_buf, sizeof px_buf);
+        if (px_ok(&px_buf, n, px_main_sum(&proj_slot[slot & 3u]))) {
+            px_buf.main_sum = px_main_sum(&proj_wire);
+            px_buf.sum = px_hash(&px_buf);
+            (void)st_save(OBJ_PROJX0 + (slot & 3u), &px_buf, sizeof px_buf);
+        }
+    }
 #endif
     memcpy(&proj_slot[slot & 3u], &proj_wire, sizeof proj_wire);
     if (proj_cur == (slot & 3u))
@@ -1038,6 +1181,8 @@ static int project_erase(uint32_t slot)
         ui_message("ERASE ERROR");
         return 2;
     }
+    if (flash_ok)
+        (void)st_save(OBJ_PROJX0 + slot, &px_buf, 0);   /* BOMZH LIVE: T5 T6's record with it */
 #endif
     memset(&proj_slot[slot], 0, sizeof proj_slot[slot]);
     if (proj_cur == slot)
@@ -1163,6 +1308,8 @@ static int project_new(void)
     proj_fm6_init(q);                                   /* (and the sum) */
     if (project_restore_runtime(q))
         return 1;
+    px_apply(0);                                        /* BOMZH LIVE: T5, T6 as at power-on too */
+    proj_kept_now();
     ui_message("ALL CLEARED");
     return 0;
 }
@@ -1176,6 +1323,8 @@ static void project_load(uint32_t slot)
     if (!project_restore_runtime(&proj_scratch)) {
         proj_cur = (uint8_t)(slot & 3u);
         pat_from_set((slot & 3u) + 1u);
+        px_load(OBJ_PROJX0 + (slot & 3u), px_main_sum(&proj_slot[slot & 3u]));   /* BOMZH LIVE: T5, T6 */
+        proj_kept_now();
     }
 }
 
@@ -1366,6 +1515,17 @@ static uint32_t autosave_sig(void)
         if (i != G_SLOT && i != G_NAME && i != G_LOAD && i != G_SAVE)
             h = as_mix(h, &song.g[i], sizeof song.g[i]);
     h = as_mix(h, song.mch, sizeof song.mch);           /* (1.5.5: MIDI IN TRACK's channels, the project's) */
+    for (i = PX_T0; i < PX_T0 + PX_N; i++) {            /* BOMZH LIVE: T5, T6 (px_capture's values) */
+        const track_t *t = &trk[i];
+        for (j = 0; j < P_COUNT; j++) {
+            int16_t v = motion_base_value(t, j);
+            h = as_mix(h, &v, sizeof v);
+        }
+        h = as_mix(h, &t->eng_req, 1);
+        h = as_mix(h, &t->preset, 1);
+        h = as_mix(h, t->step, sizeof t->step);
+        h = as_mix(h, fm6_patch[i], sizeof fm6_patch[i]);
+    }
     h = as_mix(h, &motion, sizeof motion);
     h = as_mix(h, &chain_config, sizeof chain_config);
     return as_mix(h, proj_name, sizeof proj_name);
@@ -1413,7 +1573,8 @@ static void autosave_poll(void)
     as.wrote = 1;
     project_capture(&proj_scratch);
     proj_wire_gen++;
-    as.err = !proj_pack(&proj_wire, &proj_scratch) || st_save(OBJ_AUTOSAVE, &proj_wire, sizeof proj_wire) != 0;
+    as.err = !proj_pack(&proj_wire, &proj_scratch) || st_save(OBJ_AUTOSAVE, &proj_wire, sizeof proj_wire) != 0 ||
+             px_save(OBJ_ASX, px_main_sum(&proj_wire)) != 0;   /* (BOMZH LIVE: T5, T6 beside it) */
     if (!as.err) {
         as.saved = sig;
         as.writes++;
@@ -1435,6 +1596,7 @@ static int autosave_boot(int allowed)
         if (n > 0 && proj_import(&proj_scratch, &proj_wire, n)) {
             proj_bound(&proj_scratch);
             if (!project_restore_runtime(&proj_scratch)) {
+                px_load(OBJ_ASX, px_main_sum(&proj_wire));   /* BOMZH LIVE: T5, T6 (proj_wire: the autosave) */
                 ui_message("RESTORED");
                 rc = 1;
             }

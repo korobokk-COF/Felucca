@@ -43,6 +43,7 @@ static uint32_t pow2_q16(int32_t d16)
  * smp_zone_t layout (off relative to the slot's data at +512) + IMA ADPCM data. */
 #include "../bsp/chip/fm1_xip.h"   /* relative: hostsim includes this file too */
 #define SMP_USER_SLOTS 3
+#define SMP_USER_LIVE 2u                            /* BOMZH LIVE: slots 1, 2 only; the third's flash holds T5 T6 (storage.c) */
 #define SMP_USER_BASE 0xA0000u
 #define SMP_USER_SIZE 0x14000u
 #define SMP_USER_DATA 512u
@@ -82,6 +83,8 @@ static void smp_user_scan(uint32_t k)
     smp_user_gen++;
     usr_nz[k] = 0;
     slc_user_scan(k, 0);
+    if (k >= SMP_USER_LIVE)                         /* (BOMZH LIVE: the third slot is never read: empty) */
+        return;
     if (h->magic == SMP_USER_MAGIC && h->version == 1 && h->nz && h->nz <= 16u &&
         h->data_len <= SMP_USER_SIZE - SMP_USER_DATA) {
         base = (uint32_t)(uintptr_t)(smp_user_xip(k) + SMP_USER_DATA) - (uint32_t)(uintptr_t)SMP_DATA;

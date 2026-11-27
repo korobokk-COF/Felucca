@@ -29,7 +29,11 @@
  * The FM6 voice bank (1.4.1, fm6_vbank.c): 0xE7000, the sector above the autosave, with a commit record of the same
  * kind (type OBJ_FM6VB, not an st_load object); a new bank is first staged in the autosave's older copy (fm6_vbank.c). */
 enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK = OBJ_UPRESET0 + 2, OBJ_UPFM6,
-       OBJ_AUTOSAVE, OBJ_COUNT };
+       OBJ_AUTOSAVE, OBJ_PROJX0, OBJ_ASX = OBJ_PROJX0 + 4, OBJ_COUNT };
+/* BOMZH LIVE: T5 and T6 beside each project slot (OBJ_PROJX0 + slot) and beside the autosave (OBJ_ASX), project.c
+ * proj_ext_t: five A/B pairs at 0xD2000..0xDBFFF, the top half of the third user sample slot (eng_sample.c
+ * SMP_USER_LIVE: that slot is never used, its header sector stays as it is) */
+#define ST_PX_BASE 0xD2000u
 #define OBJ_FM6VB 32u                          /* the voice bank's commit records (fm6_vbank.c; >= OBJ_COUNT: st_load
                                                 * never takes one, no object here takes its sectors) */
 
@@ -63,6 +67,8 @@ static uint32_t st_crc32(const void *p, uint32_t n) { return ~st_crc32_add(0xFFF
 
 static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy A (0) / B (1) */
 {
+    if (obj >= OBJ_PROJX0 && obj <= OBJ_ASX)            /* (BOMZH LIVE) */
+        return ST_PX_BASE + (obj - OBJ_PROJX0) * 2u * ST_SECTOR + copy * ST_SECTOR;
     if (obj == OBJ_SETTINGS)
         return 0xFC000u + copy * ST_SECTOR;
     if (obj == OBJ_FM6BANK || obj == OBJ_UPFM6)          /* (the same pair: see the flash map) */
