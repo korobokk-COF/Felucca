@@ -2,7 +2,8 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Effects: per-track DIST and INSERT (1.5), then sends into three
  * shared buses (chorus, tempo delay, reverb). Mono buses, stereo dry mix. */
-#define DLY_LEN 65536u           /* 1.49 s: 1/4 fits from 41 BPM, 1/4D from 61, 1/2 from 81 */
+#define DLY_LEN 32768u           /* BOMZH LIVE: 0.74 s (was 65536, 1.49 s), for the pool: 1/4 fits from 81 BPM,
+                                  * 1/4D from 122, 1/2 from 162 */
 #define CHO_LEN 2048u
 static int16_t dly_buf[DLY_LEN] __attribute__((section(".pool")));
 static int16_t cho_buf[CHO_LEN] __attribute__((section(".pool")));
@@ -231,7 +232,7 @@ static uint32_t div_samples(uint32_t div)
 #include "click.c"                                   /* the metronome's click (after the master: audio.c) */
 
 /* the delay's TIME (params.c N_DTIME): N_DIV's ten (div_samples), then 1.5.1's dotted 1/8D 1/16D 1/4D (10, 11, 12: 3/4,
- * 3/8, 3/2 of a quarter); at most DLY_LEN - 1 samples (1.486 s): 1/4D clamps at 60 BPM and below (1/2 below 81) */
+ * 3/8, 3/2 of a quarter); at most DLY_LEN - 1 samples (0.743 s): 1/4D clamps below 122 BPM, 1/2 below 162 */
 static const uint8_t DIV_DOT[3] = {2, 3, 1};           /* 3 quarters >> this */
 static uint32_t delay_samples(void)
 {
@@ -813,6 +814,46 @@ static int32_t wet[CTL];                                 /* (the dry mix and the
 static int32_t send_c[CTL], send_d[CTL], send_r[CTL], wet[CTL], mix_l[CTL], mix_r[CTL];
 #endif
 
+/* DUCK (BOMZH LIVE): the kick's sidechain. A KICK lane hit on any DRUM track (voice.c trk_note_on: duck_hit) pulls
+ * the envelope to full within the block; it then falls back linearly over D.REL (G_DRLVL, F_TIME: ENV_LIN, as the
+ * ADSR's times). Each track's DUCK (P_ED_FX, 0..127) is how far its level dips at the envelope's top: 0 nothing (the
+ * default: the track bit for bit as before), 127 silence. duck_e0 / duck_e1: the envelope at the block's start and
+ * end (Q24), set once per block before the parts (mix_block), so both cores only read them; each part ramps its gain
+ * between them sample by sample (no zipper). After DIST, the INSERT, the SLICER and the FX layer's mute: on the
+ * track's whole sound, before its level, pan and sends (its reverb and delay pump with it) */
+#define DUCK_REL_MIN 55                                 /* D.REL's least (~54 ms): a project's 0 is not a click */
+static int32_t duck_e0, duck_e1;
+static void duck_block(void)
+{
+    duck_e0 = duck_e1;
+    if (duck_hit) {
+        duck_hit = 0;
+        duck_e1 = 1 << 24;
+    } else if (duck_e1) {
+        duck_e1 -= (int32_t)ENV_LIN[clamp(song.g[G_DRLVL], DUCK_REL_MIN, 127)];
+        if (duck_e1 < 0)
+            duck_e1 = 0;
+    }
+}
+static inline int32_t duck_gain(int32_t e, int32_t amt)  /* Q15: 32768 at rest */
+{
+    return 32768 - (((e >> 9) * amt * 258) >> 15);      /* (e Q24 -> Q15; amt 127 -> 32766) */
+}
+static __attribute__((noinline)) void duck_apply(const track_t *t, int32_t *b, int32_t *sd, uint32_t n)
+{
+    uint32_t i;
+    int32_t amt = t->p[P_ED_FX], g, dg;
+    if (amt <= 0 || !(duck_e0 | duck_e1))
+        return;
+    g = duck_gain(duck_e0, amt);
+    dg = (duck_gain(duck_e1, amt) - g) / (int32_t)n;
+    for (i = 0; i < n; i++, g += dg) {
+        b[i] = mulq16(b[i], (uint32_t)g << 1);
+        if (sd)
+            sd[i] = mulq16(sd[i], (uint32_t)g << 1);
+    }
+}
+
 /* SPREAD (#148): a POLY or UNISON part whose SPRD is above 0. Its voices start left and right of PAN in turn (voice.c
  * voice_start; UNISON's detuned voices alternate), at PAN -/+ SPRD / 2 (SPRD 127: hard left and right), with the pan
  * law PAN has (the far side down, the near one as it is). track_render gives every voice (b, as always) and the left
@@ -842,6 +883,7 @@ static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_
     slicer_track_sd(t, b, d, n);
     if ((pf.mute >> (t - trk)) & 1u)
         perf_mute_sd((uint32_t)(t - trk), b, d, n);
+    duck_apply(t, b, d, n);                             /* DUCK: the kick's sidechain (BOMZH LIVE) */
     for (i = 0; i < n; i++) {
         int32_t x = ((b[i] >> 2) * lvl) >> 10, a = x < 0 ? -x : x, y = ((d[i] >> 2) * lvl) >> 10;
         int32_t xs = clamp(x, -xmax, xmax);
@@ -913,6 +955,7 @@ static void mix_part(track_t *t, uint32_t n SM_DECL)
         slicer_track(t, b, n);                          /* slicer.c: before the level, pan and sends */
         if ((pf.mute >> (t - trk)) & 1u)
             perf_mute((uint32_t)(t - trk), b, n);       /* perform.c: a black key in the FX layer */
+        duck_apply(t, b, 0, n);                         /* DUCK: the kick's sidechain (BOMZH LIVE) */
     }
     if (!T_SPREAD(t)) {                                /* (the mix's values read after the calls: none is held over
                                                          * them, no spill in the loop: the ISR's cost as before 1.5) */
@@ -1040,6 +1083,7 @@ static void mix_block(int32_t *out, uint32_t n)
     for (i = 0; i < n; i++)
         send_c[i] = send_d[i] = send_r[i] = mix_l[i] = mix_r[i] = 0;
     events_block(n);
+    duck_block();                                       /* DUCK: this block's kicks (after the notes, before the parts) */
     perf = perf_begin(n);                               /* the FX hold layer at work (perform.c) */
 #if FELUCCA_CPU2
     uint32_t m = C1_ON() ? C1_SPLIT() & ((1u << NPART) - 1u) : 0u;

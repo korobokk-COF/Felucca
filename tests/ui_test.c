@@ -3324,9 +3324,9 @@ static int test_layer(void)
     project_load(2);
     bad += check("REVERB page: TYPE HALL (power-on) / ROOM / SPRING on KNOB 1 (SIZE, DAMP beside it); a project keeps SPRING",
                  ok && song.g[G_RTYPE] == 1);
-    go_title("CHORUS");
-    bad += check("  CHORUS page: CRT CDP", cur_page()->fam == FAM_FX && cur_page()->id[0] == G_CRATE &&
-                 cur_page()->id[1] == G_CDEPTH && cur_page()->id[2] == 0xFFu);
+    go_title("CHO+DUCK");
+    bad += check("  CHO+DUCK page: CRT CDP D.REL", cur_page()->fam == FAM_FX && cur_page()->id[0] == G_CRATE &&
+                 cur_page()->id[1] == G_CDEPTH && cur_page()->id[2] == G_DRLVL && cur_page()->id[3] == 0xFFu);
     /* chording: a key held before FX stays a note, its note-off arrives */
     ui_power_on();
     mo = mo_w;
